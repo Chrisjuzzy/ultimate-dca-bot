@@ -1,0 +1,17 @@
+[Unit]
+Description=Ultimate DCA Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ultimate_dca_bot
+ExecStart=/opt/ultimate_dca_bot/.venv/bin/python bot.py
+Restart=always
+RestartSec=15
+KillSignal=SIGINT
+TimeoutStopSec=30
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

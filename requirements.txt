@@ -1,0 +1,9 @@
+ccxt
+pandas
+numpy
+ta
+streamlit
+plotly
+python-dotenv
+requests
+sqlalchemy

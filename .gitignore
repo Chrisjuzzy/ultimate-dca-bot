@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+logs/
+database/*.db
+data/positions.json
+data/candles/*
+!data/candles/.gitkeep

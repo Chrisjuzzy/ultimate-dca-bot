@@ -8,3 +8,13 @@ font="sans serif"
 
 [server]
 headless=true
+port=8501
+enableXsrfProtection=true
+enableCORS=false
+
+[client]
+showErrorDetails=true
+toolbarMode="auto"
+
+[logger]
+level="info"

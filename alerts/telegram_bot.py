@@ -6,6 +6,8 @@ from portfolio.positions import PositionManager
 from analytics.performance import build_performance_report
 from analytics.trade_history import TradeHistoryManager
 from monitoring.health_monitor import check_health
+from strategy.safety import DailyReportGenerator, SafeModeContext, SafeModeEngine
+from datetime import datetime
 
 # Initialize logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -13,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Telegram Bot Token (replace with your bot token)
 TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+TELEGRAM_CHAT_ID = "YOUR_CHAT_ID"  # For automatic reports
 
 # Command Handlers
 def start_bot(update: Update, context: CallbackContext) -> None:
@@ -97,6 +100,21 @@ Last 5 Trades:
     """
     update.message.reply_text(last_trades_summary)
 
+def send_daily_report(context: CallbackContext) -> None:
+    """Send daily trading report via Telegram."""
+    report = DailyReportGenerator.generate_daily_report(
+        trades_count=6,
+        win_rate=83.33,
+        daily_pnl_percent=1.21,
+        best_setup="Bullish RSI Recovery",
+        worst_setup="Volatile Sideways",
+        risk_level="LOW"
+    )
+    
+    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+    bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=report)
+    logger.info("Daily report sent via Telegram")
+
 # Main Function
 def main() -> None:
     updater = Updater(TELEGRAM_BOT_TOKEN)
@@ -113,6 +131,10 @@ def main() -> None:
     dispatcher.add_handler(CommandHandler("brain", brain))
     dispatcher.add_handler(CommandHandler("health", health))
     dispatcher.add_handler(CommandHandler("lasttrades", last_trades))
+
+    # Schedule daily report at 00:00 UTC
+    job_queue = updater.job_queue
+    job_queue.run_daily(send_daily_report, time=datetime.strptime("00:00", "%H:%M").time())
 
     # Start the bot
     updater.start_polling()

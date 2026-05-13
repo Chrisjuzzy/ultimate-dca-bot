@@ -18,6 +18,14 @@ MAX_DAILY_LOSS_PERCENT = 5
 MAX_OPEN_POSITIONS = 2
 
 # ======================================
+# TRADE QUALITY SETTINGS (PHASE B)
+# ======================================
+
+MIN_SCORE_FOR_TRADE = 82  # Reject trades below this score (stop overtrading)
+CONSERVATIVE_MODE = False  # Set to True for fewer but higher quality trades
+CONSERVATIVE_MIN_SCORE = 87  # Higher threshold in conservative mode
+
+# ======================================
 # STRATEGY SETTINGS
 # ======================================
 
@@ -38,6 +46,15 @@ EMA_FAST = 50
 EMA_SLOW = 200
 
 ADX_THRESHOLD = 20
+
+# ======================================
+# SAFETY MODE SETTINGS
+# ======================================
+
+AUTO_SAFE_MODE_ENABLED = True
+MAX_API_RECONNECTS = 3
+MAX_DRAWDOWN_THRESHOLD_PERCENT = 3.0
+MAX_CONSECUTIVE_LOSSES = 3
 
 # ======================================
 # DASHBOARD

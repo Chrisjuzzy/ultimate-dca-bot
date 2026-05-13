@@ -252,30 +252,37 @@ def inject_styles() -> None:
 
 
 def main() -> None:
-    inject_styles()
-    snapshot = safe_load_positions()
-    journal = TradeJournal()
-    journal_entries = journal.load(limit=200)
-    performance = build_performance_report(snapshot, starting_equity_usdt=0)
-    health = build_health_state(journal_entries)
-    control = load_control()
-    paper_report = load_paper_report()
-    trade_history_mgr = TradeHistoryManager(TRADE_HISTORY_FILE)
+    try:
+        inject_styles()
+        snapshot = safe_load_positions()
+        journal = TradeJournal()
+        journal_entries = journal.load(limit=200)
+        performance = build_performance_report(snapshot, starting_equity_usdt=0)
+        health = build_health_state(journal_entries)
+        control = load_control()
+        paper_report = load_paper_report()
+        trade_history_mgr = TradeHistoryManager(TRADE_HISTORY_FILE)
 
-    render_header()
-    render_mode_banner(control)
-    render_status_bar(control, health, paper_report, journal_entries, snapshot, trade_history_mgr)
+        render_header()
+        render_mode_banner(control)
+        render_status_bar(control, health, paper_report, journal_entries, snapshot, trade_history_mgr)
 
-    # New layout structure
-    col1, col2 = st.columns([1, 1])
+        # New layout structure
+        col1, col2 = st.columns([1, 1])
 
-    with col1:
-        render_live_market_trade_card()
-        render_trade_story_timeline(trade_history_mgr)
+        with col1:
+            render_live_market_trade_card()
+            try:
+                render_trade_story_timeline(trade_history_mgr)
+            except Exception as e:
+                st.warning(f"Trade history unavailable: {str(e)}")
 
-    with col2:
-        render_portfolio_panel(snapshot, performance, paper_report)
-        render_intelligence_panel(health, control)
+        with col2:
+            render_portfolio_panel(snapshot, performance, paper_report)
+            render_intelligence_panel(health, control)
+    except Exception as e:
+        st.error(f"Dashboard error: {str(e)}")
+        st.write("Attempting to recover... Please refresh the page.")
 
 
 def render_header() -> None:
@@ -406,21 +413,47 @@ def render_live_market_trade_card() -> None:
 
 def render_portfolio_panel(snapshot, performance, paper_report) -> None:
     st.subheader("💼 Portfolio Panel")
-    st.metric("Equity", "$10,000")
-    st.metric("Daily PnL", "+$500")
-    st.metric("Weekly PnL", "+$1,200")
-    st.metric("Exposure %", "50%")
-    st.text("Open Positions: 3")
-    if st.button("STOP BOT NOW", use_container_width=True):
-        disable_bot()
-        st.rerun()
+    try:
+        equity = float(paper_report.get("final_equity_usdt", 1000.0) or 1000.0)
+        daily_pnl = float(paper_report.get("daily_pnl_usdt", 0.0) or 0.0)
+        weekly_pnl = float(paper_report.get("weekly_pnl_usdt", 0.0) or 0.0)
+        exposure = sum(
+            getattr(pos, 'current_price', 0) * getattr(pos, 'remaining_quantity', 0)
+            for pos in (snapshot.positions.values() if snapshot and snapshot.positions else [])
+        )
+        exposure_pct = (exposure / equity * 100) if equity > 0 else 0
+        
+        st.metric("Equity", f"${equity:.2f}")
+        st.metric("Daily PnL", f"${daily_pnl:+.2f}")
+        st.metric("Weekly PnL", f"${weekly_pnl:+.2f}")
+        st.metric("Exposure %", f"{exposure_pct:.1f}%")
+        
+        open_count = len(snapshot.positions) if snapshot and snapshot.positions else 0
+        st.text(f"Open Positions: {open_count}")
+        
+        if st.button("🛑 STOP BOT NOW", use_container_width=True):
+            disable_bot()
+            st.rerun()
+    except Exception as e:
+        st.error(f"Portfolio panel error: {str(e)}")
 
 
 def render_trade_story_timeline(trade_history_mgr) -> None:
     st.subheader("📜 Trade Story Timeline")
-    trades = trade_history_mgr.load_filtered(time_filter="today")
-    for trade in trades:
-        st.text(f"Entry: {trade.entry_price}, Reason: {trade.reason}, Exit: {trade.exit_price}, Profit: {trade.pnl_usdt}")
+    try:
+        trades = trade_history_mgr.load_filtered(time_filter="today")
+        if not trades:
+            st.info("No trades today. Waiting for market opportunity...")
+            return
+        for trade in trades:
+            entry_price = getattr(trade, 'entry_price', 'N/A')
+            reason = getattr(trade, 'reason', 'N/A')
+            exit_price = getattr(trade, 'exit_price', 'N/A')
+            pnl = getattr(trade, 'pnl_usdt', 0.0)
+            pnl_color = "🟢" if pnl >= 0 else "🔴"
+            st.text(f"{pnl_color} Entry: {entry_price} | Reason: {reason} | Exit: {exit_price} | P&L: {pnl:+.2f}")
+    except Exception as e:
+        st.info(f"Trade history: {str(e) if str(e) else 'No trades recorded yet'}")
 
 
 def render_intelligence_panel(health, control) -> None:

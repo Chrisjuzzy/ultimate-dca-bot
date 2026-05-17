@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Literal
 
 from analytics.trade_history import TradeHistoryManager
 from execution.exits import ExitDecision
 from utils.logger import logger
+from utils.state import load_positions_state, save_positions_state
 
 
 def clamp_float(value: float, min_val: float, max_val: float) -> float:
@@ -613,7 +615,6 @@ def apply_exit_decision(
             hold_minutes = (dt.fromisoformat(timestamp_iso) - dt.fromisoformat(current.opened_at)).total_seconds() / 60
             
             trade_history_manager.record_trade(
-                timestamp=timestamp_iso,
                 symbol=current.symbol,
                 side="long",  # Assuming long positions for now
                 entry_price=current.entry_price,
@@ -621,12 +622,12 @@ def apply_exit_decision(
                 quantity=current.quantity,
                 pnl_usdt=realized_pnl,
                 pnl_pct=(realized_pnl / (current.entry_price * current.quantity)) * 100 if current.entry_price * current.quantity > 0 else 0,
-                hold_minutes=hold_minutes,
+                hold_minutes=int(hold_minutes),
                 score=current.entry_score,
                 regime=current.regime_at_entry,
                 exit_reason=exit_reason,
-                entry_reasons=current.entry_reasons,
-                fees=current.total_fees_usdt,
+                entry_reason=current.entry_reasons,
+                fees_usdt=current.total_fees_usdt,
                 order_id=f"{current.symbol}_{current.opened_at.replace('-', '').replace(':', '').replace('T', '_')}",
             )
         except Exception as e:

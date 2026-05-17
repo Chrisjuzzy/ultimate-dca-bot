@@ -447,8 +447,15 @@ class TradeHistoryManager:
 
     @staticmethod
     def _dict_to_trade(data: dict) -> TradeHistory:
-        """Convert dict to TradeHistory."""
-        return TradeHistory(**data)
+        """Convert dict to TradeHistory and normalize legacy fields."""
+        normalized = dict(data)
+        if "trade_id" in normalized:
+            normalized["order_id"] = normalized.pop("trade_id")
+        if "entry_reasons" in normalized:
+            normalized["entry_reason"] = normalized.pop("entry_reasons")
+        allowed_fields = set(TradeHistory.__annotations__.keys())
+        filtered = {key: value for key, value in normalized.items() if key in allowed_fields}
+        return TradeHistory(**filtered)
 
     @staticmethod
     def _calculate_recovery_factor(group, weekly_stats) -> float:

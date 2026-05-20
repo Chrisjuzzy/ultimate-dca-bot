@@ -363,16 +363,13 @@ def render_status_bar(
         ("Risk Mode", risk_mode, "danger" if risk_mode in {"SURVIVAL", "PAUSED"} else ("warn" if risk_mode in {"DEFENSIVE", "REDUCED"} else "good")),
         ("Market Stress", f"{stress_label} ({stress_score})", "danger" if stress_label == "HIGH" else "info"),
     ]
-    html = '<div class="status-grid">'
-    for label, value, klass in cards:
-        html += f"""
-        <div class="status-card {klass}">
-            <span>{label}</span>
-            <strong>{value}</strong>
-        </div>
-        """
-    html += "</div>"
-    st.markdown(html, unsafe_allow_html=True)
+    cols = st.columns(len(cards))
+    for col, (label, value, klass) in zip(cols, cards):
+        delta = None
+        if label == "Score":
+            delta = ">=82 target" if int(value) >= 82 else "<82 wait"
+        with col:
+            col.metric(label, value, delta=delta)
 
 
 def render_bot_control_panel(control: dict) -> None:

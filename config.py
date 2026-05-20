@@ -22,7 +22,7 @@ MAX_OPEN_POSITIONS = 2
 # ======================================
 
 MIN_SCORE_FOR_TRADE = 82  # Reject trades below this score (stop overtrading)
-CONSERVATIVE_MODE = False  # Set to True for fewer but higher quality trades
+CONSERVATIVE_MODE = False  # Set True to enforce stricter trade filtering
 CONSERVATIVE_MIN_SCORE = 87  # Higher threshold in conservative mode
 
 # ======================================

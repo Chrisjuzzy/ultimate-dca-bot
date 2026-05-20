@@ -1,4 +1,4 @@
-import json
+﻿import json
 from datetime import datetime
 from pathlib import Path
 
@@ -137,7 +137,7 @@ def inject_styles() -> None:
 
         .status-grid {
             display: grid;
-            grid-template-columns: repeat(7, minmax(120px, 1fr));
+            grid-template-columns: repeat(5, minmax(120px, 1fr));
             gap: 12px;
             margin: 12px 0 22px 0;
         }
@@ -290,9 +290,8 @@ def main() -> None:
 
         render_hero_section(control)
         render_status_bar(control, health, paper_report, journal_entries, snapshot, trade_history_mgr)
-        render_market_control_section(control, trade_history_mgr, snapshot)
-        render_portfolio_panel(snapshot, performance, paper_report)
-        render_trade_and_intelligence_section(trade_history_mgr, health, control)
+        render_center_sections(snapshot, performance, paper_report, trade_history_mgr, control)
+        render_bottom_sections(trade_history_mgr, health, control, journal_entries)
     except Exception as e:
         st.error(f"Dashboard error: {str(e)}")
         st.write("Attempting to recover... Please refresh the page.")
@@ -349,25 +348,20 @@ def render_status_bar(
 ) -> None:
     enabled = bool(control.get("enabled", False))
     latest_entry = latest_payload(journal_entries, {"entry_decision", "entry_rejected"})
-    performance = paper_report.get("performance", {}) if paper_report else {}
-    equity = float(paper_report.get("final_equity_usdt", STARTING_EQUITY_USDT) or STARTING_EQUITY_USDT)
-    drawdown = float(paper_report.get("max_equity_drawdown_percent", 0.0) or 0.0)
-    win_rate = float(performance.get("win_rate_percent", 0.0) or 0.0)
-    regime = latest_entry.get("regime") or "unknown"
-
-    # Get stats from trade history
-    trades = trade_history_mgr.load_filtered(time_filter="today")
-    today_trades = len(trades)
-    today_pnl = sum(t.pnl_usdt for t in trades) if trades else 0.0
+    mode = str(control.get("mode", "paper")).upper()
+    state_mode = "PAUSED" if not enabled else mode
+    regime = str(latest_entry.get("regime") or infer_btc_regime() or "unknown").upper()
+    score = int(latest_entry.get("score", 0) or 0)
+    risk_mode = str(latest_entry.get("recovery_mode") or "normal").upper()
+    stress_score = int(latest_entry.get("market_stress_score", estimate_market_stress_score()) or 0)
+    stress_label = "HIGH" if stress_score >= 60 else "LOW"
 
     cards = [
-        ("Bot Status", "Running" if enabled else "Paused", "good" if enabled else "warn"),
-        ("Health", health_status_label(health), health_status_class(health)),
-        ("Trades Today", str(today_trades), "info"),
-        ("Daily PnL", f"{today_pnl:+.2f} USDT", "good" if today_pnl >= 0 else "danger"),
-        ("Drawdown", f"{drawdown:.2f}%", "good" if drawdown < 3 else "warn"),
-        ("Win Rate", f"{win_rate:.2f}%", "good" if 55 <= win_rate <= 75 else "warn"),
-        ("Regime", str(regime).upper(), regime_class(str(regime))),
+        ("Mode", state_mode, "warn" if state_mode == "PAUSED" else "good"),
+        ("Regime", regime, regime_class(regime)),
+        ("Score", str(score), "good" if score >= 82 else "warn"),
+        ("Risk Mode", risk_mode, "danger" if risk_mode in {"SURVIVAL", "PAUSED"} else ("warn" if risk_mode in {"DEFENSIVE", "REDUCED"} else "good")),
+        ("Market Stress", f"{stress_label} ({stress_score})", "danger" if stress_label == "HIGH" else "info"),
     ]
     html = '<div class="status-grid">'
     for label, value, klass in cards:
@@ -419,23 +413,13 @@ def render_bot_control_panel(control: dict) -> None:
     st.caption("Security: use on trusted local network or VPS with authentication only.")
 
 
-def render_market_control_section(control: dict, trade_history_mgr, snapshot: PositionSnapshot) -> None:
-    st.subheader("📊 Live Market, Bot Control & Telegram")
-    col1, col2, col3 = st.columns([1, 1, 1])
-
-    with col1:
+def render_center_sections(snapshot, performance, paper_report, trade_history_mgr, control) -> None:
+    st.subheader("Live Market + Portfolio")
+    left_col, right_col = st.columns([1.6, 1], gap="large")
+    with left_col:
         render_live_market_trade_card(snapshot)
-        try:
-            render_live_charts()
-        except Exception:
-            # non-fatal: charts are informational
-            pass
-
-    with col2:
-        render_bot_control_panel(control)
-
-    with col3:
-        render_telegram_command_center()
+    with right_col:
+        render_portfolio_panel(snapshot, performance, paper_report, trade_history_mgr, control)
 
 
 def render_telegram_command_center() -> None:
@@ -445,16 +429,16 @@ def render_telegram_command_center() -> None:
             <h3>Telegram Command Center</h3>
             <p>Use these bot commands for remote control and status checks.</p>
             <ul>
-                <li><strong>/startbot</strong> – start the strategy loop</li>
-                <li><strong>/stopbot</strong> – stop trading and pause the loop</li>
-                <li><strong>/restartbot</strong> – request a soft restart</li>
-                <li><strong>/status</strong> – current bot + health summary</li>
-                <li><strong>/positions</strong> – open position snapshot</li>
-                <li><strong>/pnl</strong> – today’s profit and loss</li>
-                <li><strong>/risk</strong> – current risk posture</li>
-                <li><strong>/brain</strong> – analysis and regime status</li>
-                <li><strong>/health</strong> – system health and errors</li>
-                <li><strong>/lasttrades</strong> – recent trade history</li>
+                <li><strong>/startbot</strong> â€“ start the strategy loop</li>
+                <li><strong>/stopbot</strong> â€“ stop trading and pause the loop</li>
+                <li><strong>/restartbot</strong> â€“ request a soft restart</li>
+                <li><strong>/status</strong> â€“ current bot + health summary</li>
+                <li><strong>/positions</strong> â€“ open position snapshot</li>
+                <li><strong>/pnl</strong> â€“ todayâ€™s profit and loss</li>
+                <li><strong>/risk</strong> â€“ current risk posture</li>
+                <li><strong>/brain</strong> â€“ analysis and regime status</li>
+                <li><strong>/health</strong> â€“ system health and errors</li>
+                <li><strong>/lasttrades</strong> â€“ recent trade history</li>
             </ul>
         </div>
         """,
@@ -474,54 +458,41 @@ def render_telegram_command_center() -> None:
 
 
 def render_live_market_trade_card(snapshot: PositionSnapshot) -> None:
-    st.subheader("📊 Live Market + Trade Card")
+    st.subheader("Live Market + Trade Card")
+
+    for symbol in ("BTC/USDT", "ETH/USDT"):
+        price = safe_float(market_data.get_price(symbol))
+        change_pct = safe_float(market_data.fetch_24h_change(symbol))
+        trend = infer_symbol_trend(symbol)
+        if price > 0:
+            st.metric(
+                symbol,
+                f"${price:,.2f}",
+                f"{change_pct:+.2f}% | {trend}",
+            )
+        else:
+            st.metric(symbol, "n/a", f"{trend}")
+
+    render_live_charts("BTC/USDT")
+    render_live_charts("ETH/USDT")
 
     open_positions = snapshot.open_positions if snapshot and snapshot.positions else {}
     if open_positions:
-        st.write("**Open Positions**")
-        for symbol, pos in open_positions.items():
-            pnl = getattr(pos, 'unrealized_pnl_usdt', 0.0)
-            pnl_color = "🟢" if pnl >= 0 else "🔴"
-            st.metric(
-                f"{symbol}",
-                f"${getattr(pos, 'current_price', 0.0):,.2f}",
-                f"{pnl_color} {pnl:+.2f} USDT",
-            )
-        total_open = len(open_positions)
-        st.caption(f"{total_open} open position{'s' if total_open != 1 else ''} present")
+        position = next(iter(open_positions.values()))
+        pnl = safe_float(getattr(position, "unrealized_pnl_usdt", 0.0))
+        st.markdown("**Active Trade**")
+        st.write(
+            f"{position.symbol} | Entry {getattr(position, 'entry_price', 0):.2f} | "
+            f"Current {getattr(position, 'current_price', 0):.2f} | PnL {pnl:+.2f} USDT"
+        )
     else:
-        # attempt to show live BTC/ETH from Binance public feed, fall back to placeholders
-        try:
-            btc_price = market_data.get_price("BTC/USDT")
-            btc_pct = market_data.fetch_24h_change("BTC/USDT")
-        except Exception:
-            btc_price = None
-            btc_pct = None
-
-        try:
-            eth_price = market_data.get_price("ETH/USDT")
-            eth_pct = market_data.fetch_24h_change("ETH/USDT")
-        except Exception:
-            eth_price = None
-            eth_pct = None
-
-        if btc_price is not None:
-            st.metric("BTC Price", f"${btc_price:,.2f}", f"{btc_pct:+.2f}%" if btc_pct is not None else "")
-        else:
-            st.metric("BTC Price", "$30,000", "+2.5%")
-
-        if eth_price is not None:
-            st.metric("ETH Price", f"${eth_price:,.2f}", f"{eth_pct:+.2f}%" if eth_pct is not None else "")
-        else:
-            st.metric("ETH Price", "$2,000", "+1.8%")
-
-        st.text("Trend: Live" if btc_price or eth_price else "Trend: Bullish")
-        st.text("Active Trade: None")
-        st.text("Scanning market...")
+        st.markdown("**Active Trade**")
+        st.write("Scanning market...")
+        st.write("Waiting for setup...")
 
 
 def render_live_charts(symbol: str = "BTC/USDT", timeframe: str = "1m", limit: int = 200) -> None:
-    st.markdown("**Live Price Chart**")
+    st.markdown(f"**{symbol} OHLCV**")
     try:
         ohlcv = market_data.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
         if not ohlcv:
@@ -541,41 +512,47 @@ def render_live_charts(symbol: str = "BTC/USDT", timeframe: str = "1m", limit: i
                 name=symbol,
             )
         )
-        fig.update_layout(margin=dict(l=0, r=0, t=20, b=0), height=300, template="plotly_dark")
+        fig.update_layout(margin=dict(l=0, r=0, t=20, b=0), height=260, template="plotly_dark")
         st.plotly_chart(fig, use_container_width=True)
     except Exception as exc:
         st.info(f"Chart error: {exc}")
 
 
-def render_portfolio_panel(snapshot, performance, paper_report) -> None:
-    st.subheader("💼 Portfolio Panel")
+def render_portfolio_panel(snapshot, performance, paper_report, trade_history_mgr, control) -> None:
+    st.subheader("Portfolio Panel")
     try:
         equity = float(paper_report.get("final_equity_usdt", 1000.0) or 1000.0)
-        daily_pnl = float(paper_report.get("daily_pnl_usdt", 0.0) or 0.0)
-        weekly_pnl = float(paper_report.get("weekly_pnl_usdt", 0.0) or 0.0)
+        daily_stats = trade_history_mgr.get_stats(time_filter="today")
+        weekly_stats = trade_history_mgr.get_stats(time_filter="7d")
+        daily_pnl = float(daily_stats.net_pnl_usdt if daily_stats else 0.0)
+        weekly_pnl = float(weekly_stats.net_pnl_usdt if weekly_stats else 0.0)
         exposure = sum(
             getattr(pos, 'current_price', 0) * getattr(pos, 'remaining_quantity', 0)
-            for pos in (snapshot.positions.values() if snapshot and snapshot.positions else [])
+            for pos in (snapshot.open_positions.values() if snapshot else [])
         )
         exposure_pct = (exposure / equity * 100) if equity > 0 else 0
-        
+
         st.metric("Equity", f"${equity:.2f}")
         st.metric("Daily PnL", f"${daily_pnl:+.2f}")
         st.metric("Weekly PnL", f"${weekly_pnl:+.2f}")
         st.metric("Exposure %", f"{exposure_pct:.1f}%")
-        
-        open_count = len(snapshot.positions) if snapshot and snapshot.positions else 0
+
+        open_count = len(snapshot.open_positions) if snapshot else 0
         st.text(f"Open Positions: {open_count}")
-        
-        # Add a prominent start button alongside the stop button so operators can
-        # easily find and start the bot from the portfolio panel.
-        start_now_col, stop_now_col = st.columns([1, 1])
-        with start_now_col:
-            if st.button("▶️ START BOT NOW", use_container_width=True):
-                enable_bot()
-                st.rerun()
-        with stop_now_col:
-            if st.button("🛑 STOP BOT NOW", use_container_width=True):
+
+        enabled = bool(control.get("enabled", False))
+        button_col1, button_col2 = st.columns(2)
+        with button_col1:
+            if enabled:
+                if st.button("PAUSE BOT", use_container_width=True):
+                    disable_bot()
+                    st.rerun()
+            else:
+                if st.button("START BOT", use_container_width=True):
+                    enable_bot()
+                    st.rerun()
+        with button_col2:
+            if st.button("STOP BOT NOW", use_container_width=True):
                 disable_bot()
                 st.rerun()
     except Exception as e:
@@ -583,40 +560,110 @@ def render_portfolio_panel(snapshot, performance, paper_report) -> None:
 
 
 def render_trade_story_timeline(trade_history_mgr) -> None:
-    st.markdown("**Recent Trade Story**")
+    st.markdown("**Trade Story Timeline**")
     try:
-        trades = trade_history_mgr.load_filtered(time_filter="today")
+        trades = trade_history_mgr.load_filtered(time_filter="7d")
         if not trades:
-            st.info("No trades today. Waiting for market opportunity...")
+            st.info("No recent trades. Waiting for market opportunity...")
             return
-        for trade in trades:
+        for trade in sorted(trades, key=lambda t: t.timestamp, reverse=True)[:12]:
             entry_price = getattr(trade, 'entry_price', 'N/A')
-            reason = getattr(trade, 'reason', 'N/A')
+            reasons = getattr(trade, 'entry_reason', []) or []
+            reason = ", ".join(reasons[:2]) if reasons else "setup recorded"
             exit_price = getattr(trade, 'exit_price', 'N/A')
             pnl = getattr(trade, 'pnl_usdt', 0.0)
-            pnl_color = "🟢" if pnl >= 0 else "🔴"
-            st.markdown(f"- {pnl_color} Entry: {entry_price} | Reason: {reason} | Exit: {exit_price} | P&L: {pnl:+.2f}")
+            stamp = str(getattr(trade, 'timestamp', ''))[:16].replace("T", " ")
+            outcome = "WIN" if pnl >= 0 else "LOSS"
+            st.markdown(
+                f"- {stamp} | {getattr(trade, 'symbol', '')} | "
+                f"Entry {entry_price} -> Exit {exit_price} | {outcome} {pnl:+.2f} USDT | Reason: {reason}"
+            )
     except Exception as e:
         st.info(f"Trade history: {str(e) if str(e) else 'No trades recorded yet'}")
 
 
-def render_intelligence_panel(health, control) -> None:
-    st.markdown("**Operational Intelligence**")
-    st.write("- Current health: **%s**" % health_status_label(health))
-    st.write("- Reconnect events: %s" % health.get("reconnect_count", 0))
-    st.write("- Error count: %s" % health.get("error_count", 0))
-    st.write("- Latest connection event: %s" % health.get("last_connection_event", "none"))
-    st.write("- Control mode: **%s**" % str(control.get("mode", "paper")).upper())
-    st.write("- Enabled: **%s**" % ("Yes" if control.get("enabled", False) else "No"))
+def render_intelligence_panel(health, control, journal_entries) -> None:
+    st.markdown("**Intelligence Panel**")
+    latest_entry = latest_payload(journal_entries, {"entry_decision", "entry_rejected"})
+    blockers = list(latest_entry.get("blockers", []))
+    warnings = list(latest_entry.get("warnings", []))
+    risk_mode = str(latest_entry.get("recovery_mode") or "normal").upper()
+    cooldown_seconds = int(latest_entry.get("remaining_seconds", 0) or 0)
+    cooldown_minutes = round(cooldown_seconds / 60, 1) if cooldown_seconds > 0 else 0.0
+
+    if not blockers:
+        st.success("No hard blockers right now.")
+    else:
+        st.warning("Current blockers")
+        for blocker in blockers[:6]:
+            st.write(f"- {blocker}")
+
+    st.write(f"- Risk mode: **{risk_mode}**")
+    st.write(f"- Cooldown timer: **{cooldown_minutes} min**")
+    st.write(f"- Health: **{health_status_label(health)}**")
+    st.write(f"- Control mode: **{str(control.get('mode', 'paper')).upper()}**")
+    st.write(f"- Enabled: **{'Yes' if control.get('enabled', False) else 'No'}**")
+
+    risk_warnings = []
+    if health.get("error_count", 0) >= 5:
+        risk_warnings.append("Error count elevated")
+    if health.get("reconnect_count", 0) >= 3:
+        risk_warnings.append("Reconnect frequency elevated")
+    if risk_mode in {"DEFENSIVE", "SURVIVAL", "PAUSED"}:
+        risk_warnings.append(f"Recovery mode is {risk_mode}")
+    risk_warnings.extend(warnings[:4])
+
+    if risk_warnings:
+        st.markdown("**Risk warnings**")
+        for item in risk_warnings:
+            st.write(f"- {item}")
 
 
-def render_trade_and_intelligence_section(trade_history_mgr, health, control) -> None:
-    st.subheader("📜 Trade Story & Intelligence")
-    left_col, right_col = st.columns([1, 1])
+def render_bottom_sections(trade_history_mgr, health, control, journal_entries) -> None:
+    st.subheader("Trade Story + Intelligence")
+    left_col, right_col = st.columns([1.2, 1], gap="large")
     with left_col:
         render_trade_story_timeline(trade_history_mgr)
     with right_col:
-        render_intelligence_panel(health, control)
+        render_intelligence_panel(health, control, journal_entries)
+
+
+def safe_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def infer_symbol_trend(symbol: str) -> str:
+    try:
+        ohlcv = market_data.fetch_ohlcv(symbol, timeframe="15m", limit=80)
+        if not ohlcv or len(ohlcv) < 50:
+            return "Unknown"
+        closes = pd.Series([row[4] for row in ohlcv], dtype="float64")
+        ema_fast = closes.ewm(span=20).mean().iloc[-1]
+        ema_slow = closes.ewm(span=50).mean().iloc[-1]
+        if ema_fast > ema_slow:
+            return "Bullish"
+        if ema_fast < ema_slow:
+            return "Bearish"
+        return "Sideways"
+    except Exception:
+        return "Unknown"
+
+
+def infer_btc_regime() -> str:
+    return infer_symbol_trend("BTC/USDT")
+
+
+def estimate_market_stress_score() -> int:
+    try:
+        btc_change = abs(safe_float(market_data.fetch_24h_change("BTC/USDT")))
+        eth_change = abs(safe_float(market_data.fetch_24h_change("ETH/USDT")))
+        score = int(min(100, (btc_change + eth_change) * 8))
+        return score
+    except Exception:
+        return 0
 
 
 def build_health_state(journal_entries) -> dict:
@@ -727,3 +774,4 @@ def short_timestamp(value: object) -> str:
 
 if __name__ == "__main__":
     main()
+

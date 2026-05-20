@@ -2,7 +2,12 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Literal
 
-from config import BASE_TRADE_USDT
+from config import (
+    BASE_TRADE_USDT,
+    CONSERVATIVE_MIN_SCORE,
+    CONSERVATIVE_MODE,
+    MIN_SCORE_FOR_TRADE,
+)
 from risk.exposure import ExposureDecision
 from risk.position_sizing import PositionSizeRecommendation
 from risk.recovery import RecoveryDecision
@@ -42,6 +47,15 @@ class EntryConfig:
     sideways_size_multiplier: float = 0.70
     elevated_stress_size_multiplier: float = 0.75
     high_stress_size_multiplier: float = 0.50
+    min_score_for_trade: int = MIN_SCORE_FOR_TRADE
+    conservative_mode: bool = CONSERVATIVE_MODE
+    conservative_min_score: int = CONSERVATIVE_MIN_SCORE
+    require_volume_confirmation: bool = True
+    require_clear_trend: bool = True
+    block_conflicting_signals: bool = True
+    conservative_allowed_regimes: tuple[str, ...] = ("bullish",)
+    win_streak_reduce_start: int = 3
+    win_streak_size_multiplier: float = 0.80
 
 
 @dataclass(frozen=True)
@@ -117,6 +131,10 @@ def evaluate_entry(
         + recovery.score_threshold_adjustment
         + stress_score_adjustment,
     )
+    if config.conservative_mode:
+        required_score = max(required_score, config.conservative_min_score)
+    else:
+        required_score = max(required_score, config.min_score_for_trade)
     entry_type = classify_entry_type(
         signals=signals,
         score=score,
@@ -353,12 +371,22 @@ def build_hard_blockers(
     config: EntryConfig,
 ) -> list[str]:
     blockers = []
+    minimum_required_score = (
+        config.conservative_min_score
+        if config.conservative_mode
+        else config.min_score_for_trade
+    )
+    allowed_regimes = (
+        config.conservative_allowed_regimes
+        if config.conservative_mode
+        else config.allowed_regimes
+    )
 
     if recovery.mode in config.blocked_recovery_modes or not recovery.can_trade:
         blockers.append("Recovery system blocks new entries")
         blockers.extend(recovery.blockers)
 
-    if regime.regime not in config.allowed_regimes:
+    if regime.regime not in allowed_regimes:
         blockers.append(f"Regime {regime.regime} is not allowed for new entries")
 
     if regime.volatility_state in config.blocked_volatility_states:
@@ -378,8 +406,26 @@ def build_hard_blockers(
     if not score.tradeable:
         blockers.append("Opportunity score is not tradeable")
 
+    if score.score < minimum_required_score:
+        blockers.append(
+            f"Score {score.score} is below minimum score {minimum_required_score}"
+        )
+
     if config.block_low_confidence and score.confidence == "low":
         blockers.append("Signal confidence is low")
+
+    if config.require_volume_confirmation and not signals.volume_confirmed:
+        blockers.append("Volume confirmation filter rejected this setup")
+
+    if config.require_clear_trend and signals.trend != "bullish":
+        blockers.append("Trend quality filter requires bullish trend")
+
+    if (
+        config.block_conflicting_signals
+        and signals.trend == "bullish"
+        and signals.momentum in {"bearish", "weak"}
+    ):
+        blockers.append("Signal conflict: bullish trend with weak/bearish momentum")
 
     if sizing.status == "blocked" or sizing.recommended_usdt <= 0:
         blockers.append("Position sizing blocks new entries")
@@ -528,6 +574,12 @@ def final_size_multiplier(
 
     if config.apply_recovery_size_multiplier:
         multiplier *= max(0.0, recovery.size_multiplier)
+
+    if (
+        config.conservative_mode
+        and recovery.recent_win_count >= config.win_streak_reduce_start
+    ):
+        multiplier *= config.win_streak_size_multiplier
 
     return round(max(0.0, min(1.0, multiplier)), 4)
 

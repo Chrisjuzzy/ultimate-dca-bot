@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 from analytics.trade_history import TradeHistoryManager
+from execution.entries import EntryDecision
 from execution.exits import ExitDecision
 from utils.logger import logger
 from utils.state import load_positions_state, save_positions_state
@@ -685,9 +686,29 @@ def require_position(snapshot: PositionSnapshot, symbol: str) -> Position:
 
 
 def snapshot_from_state(state: dict) -> PositionSnapshot:
+    def _extract_positions_map(raw_state: dict) -> dict:
+        if not isinstance(raw_state, dict):
+            return {}
+        # Preferred structure: {'positions': {symbol: payload}}
+        if "positions" in raw_state:
+            pos = raw_state.get("positions") or {}
+            if isinstance(pos, dict):
+                return pos
+            if isinstance(pos, list):
+                result = {}
+                for item in pos:
+                    if isinstance(item, dict):
+                        sym = item.get("symbol")
+                        if sym:
+                            result[str(sym)] = {k: v for k, v in item.items() if k != "symbol"}
+                return result
+            return {}
+        # Legacy/alternate: top-level mapping of symbol -> payload
+        return {k: v for k, v in raw_state.items() if isinstance(k, str) and isinstance(v, dict)}
+
     positions = {
         symbol: _coerce_position({"symbol": symbol, **payload})
-        for symbol, payload in get_positions_map(state).items()
+        for symbol, payload in _extract_positions_map(state).items()
         if isinstance(payload, dict)
     }
     return PositionSnapshot(

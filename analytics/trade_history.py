@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Literal
+from typing import Any, Iterable, Literal
 
 import pandas as pd
 
@@ -488,3 +488,107 @@ class TradeHistoryManager:
             return 0.0
 
         return round(abs(total_pnl / max_dd), 4)
+
+
+class TradeHistoryStore:
+    """
+    Backward-compatible storage wrapper used by engine/runtime modules.
+    """
+
+    def __init__(self, path: Path | str = Path("data") / "trade_history.jsonl") -> None:
+        self.manager = TradeHistoryManager(path)
+
+    def append(self, record: TradeHistory | dict) -> TradeHistory:
+        trade = _coerce_trade(record)
+        self.manager._append_trade(trade)
+        return trade
+
+    def record_trade(self, **kwargs) -> TradeHistory:
+        return self.manager.record_trade(**kwargs)
+
+    def load(self, limit: int | None = None) -> list[TradeHistory]:
+        trades = self.manager.load_all()
+        if limit is None:
+            return trades
+        return trades[-max(0, int(limit)) :]
+
+
+def records_from_paper_report(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Build trade history records from backtest/paper report payload.
+    """
+    performance = payload.get("performance", {}) if isinstance(payload, dict) else {}
+    trades = performance.get("trades", []) if isinstance(performance, dict) else []
+    records: list[dict[str, Any]] = []
+    for trade in trades:
+        if not isinstance(trade, dict):
+            continue
+        hold_hours = float(trade.get("hold_hours", 0.0) or 0.0)
+        closed_at = str(trade.get("closed_at") or payload.get("generated_at") or datetime.now(UTC).isoformat())
+        records.append(
+            {
+                "timestamp": closed_at,
+                "symbol": str(trade.get("symbol", "")),
+                "side": "sell",
+                "entry_price": float(trade.get("entry_price", 0.0) or 0.0),
+                "exit_price": float(trade.get("exit_price", trade.get("entry_price", 0.0)) or 0.0),
+                "quantity": float(trade.get("quantity", 0.0) or 0.0),
+                "pnl_usdt": float(trade.get("realized_pnl_usdt", 0.0) or 0.0),
+                "pnl_pct": float(trade.get("pnl_pct", 0.0) or 0.0),
+                "hold_minutes": int(round(hold_hours * 60)),
+                "score": int(trade.get("entry_score", 0) or 0),
+                "regime": str(trade.get("regime", "unknown")),
+                "entry_reason": list(trade.get("entry_reason", trade.get("entry_reasons", [])) or []),
+                "exit_reason": str(trade.get("exit_reason", "")),
+                "fees_usdt": float(trade.get("total_fees_usdt", 0.0) or 0.0),
+                "order_id": str(
+                    trade.get("order_id")
+                    or f"{trade.get('symbol', '')}_{trade.get('opened_at', '')}_{trade.get('closed_at', '')}"
+                ),
+            }
+        )
+    return records
+
+
+def sync_records(
+    records: Iterable[TradeHistory | dict],
+    path: Path | str = Path("data") / "trade_history.jsonl",
+) -> list[TradeHistory]:
+    """
+    Idempotently append records and return full synced history.
+    """
+    manager = TradeHistoryManager(path)
+    existing = manager.load_all()
+    existing_fingerprints = {_trade_fingerprint(trade) for trade in existing}
+
+    for item in records:
+        trade = _coerce_trade(item)
+        fingerprint = _trade_fingerprint(trade)
+        if fingerprint in existing_fingerprints:
+            continue
+        manager._append_trade(trade)
+        existing.append(trade)
+        existing_fingerprints.add(fingerprint)
+
+    return sorted(existing, key=lambda trade: trade.timestamp)
+
+
+def _coerce_trade(record: TradeHistory | dict) -> TradeHistory:
+    if isinstance(record, TradeHistory):
+        return record
+    if isinstance(record, dict):
+        return TradeHistoryManager._dict_to_trade(record)
+    raise TypeError(f"Unsupported trade record type: {type(record)!r}")
+
+
+def _trade_fingerprint(trade: TradeHistory) -> str:
+    return "|".join(
+        [
+            trade.timestamp,
+            trade.symbol,
+            f"{trade.entry_price:.8f}",
+            f"{float(trade.exit_price or 0.0):.8f}",
+            f"{trade.quantity:.8f}",
+            trade.order_id,
+        ]
+    )

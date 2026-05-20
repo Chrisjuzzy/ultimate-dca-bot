@@ -9,9 +9,11 @@ import streamlit as st
 from analytics.performance import build_performance_report
 from analytics.trade_history import TradeHistoryManager, TimeFilter
 from analytics.trade_journal import TradeJournal
+from alerts.telegram_alerts import send_telegram, telegram_is_configured
 from config import REFRESH_SECONDS
 from core.runtime_control import disable_bot, enable_bot, load_control, request_restart, set_mode
 from portfolio.positions import PositionManager, PositionSnapshot
+from market_data import market_data
 from utils.helpers import tail_lines
 from utils.state import POSITIONS_FILE
 
@@ -217,6 +219,29 @@ def inject_styles() -> None:
             color: var(--green);
         }
 
+        .telegram-card {
+            background: linear-gradient(180deg, rgba(86, 182, 255, 0.08), rgba(22, 27, 34, 0.96));
+            border: 1px solid rgba(86, 182, 255, 0.22);
+            border-radius: 20px;
+            padding: 18px;
+            box-shadow: 0 16px 50px rgba(0, 0, 0, 0.15);
+            min-height: 320px;
+        }
+
+        .telegram-card h3 {
+            margin-bottom: 12px;
+            color: var(--text);
+        }
+
+        .telegram-card ul {
+            padding-left: 18px;
+            color: var(--muted);
+        }
+
+        .telegram-card li {
+            margin-bottom: 8px;
+        }
+
         div[data-testid="stExpander"] {
             border: 1px solid var(--border);
             border-radius: 18px;
@@ -263,23 +288,11 @@ def main() -> None:
         paper_report = load_paper_report()
         trade_history_mgr = TradeHistoryManager(TRADE_HISTORY_FILE)
 
-        render_header()
-        render_mode_banner(control)
+        render_hero_section(control)
         render_status_bar(control, health, paper_report, journal_entries, snapshot, trade_history_mgr)
-
-        # New layout structure
-        col1, col2 = st.columns([1, 1])
-
-        with col1:
-            render_live_market_trade_card()
-            try:
-                render_trade_story_timeline(trade_history_mgr)
-            except Exception as e:
-                st.warning(f"Trade history unavailable: {str(e)}")
-
-        with col2:
-            render_portfolio_panel(snapshot, performance, paper_report)
-            render_intelligence_panel(health, control)
+        render_market_control_section(control, trade_history_mgr, snapshot)
+        render_portfolio_panel(snapshot, performance, paper_report)
+        render_trade_and_intelligence_section(trade_history_mgr, health, control)
     except Exception as e:
         st.error(f"Dashboard error: {str(e)}")
         st.write("Attempting to recover... Please refresh the page.")
@@ -302,6 +315,11 @@ def render_header() -> None:
         f"Auto-refresh every {REFRESH_SECONDS}s | Last check: "
         f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     )
+
+
+def render_hero_section(control: dict) -> None:
+    render_header()
+    render_mode_banner(control)
 
 
 def render_mode_banner(control: dict) -> None:
@@ -401,14 +419,132 @@ def render_bot_control_panel(control: dict) -> None:
     st.caption("Security: use on trusted local network or VPS with authentication only.")
 
 
-def render_live_market_trade_card() -> None:
+def render_market_control_section(control: dict, trade_history_mgr, snapshot: PositionSnapshot) -> None:
+    st.subheader("📊 Live Market, Bot Control & Telegram")
+    col1, col2, col3 = st.columns([1, 1, 1])
+
+    with col1:
+        render_live_market_trade_card(snapshot)
+        try:
+            render_live_charts()
+        except Exception:
+            # non-fatal: charts are informational
+            pass
+
+    with col2:
+        render_bot_control_panel(control)
+
+    with col3:
+        render_telegram_command_center()
+
+
+def render_telegram_command_center() -> None:
+    st.markdown(
+        """
+        <div class="telegram-card">
+            <h3>Telegram Command Center</h3>
+            <p>Use these bot commands for remote control and status checks.</p>
+            <ul>
+                <li><strong>/startbot</strong> – start the strategy loop</li>
+                <li><strong>/stopbot</strong> – stop trading and pause the loop</li>
+                <li><strong>/restartbot</strong> – request a soft restart</li>
+                <li><strong>/status</strong> – current bot + health summary</li>
+                <li><strong>/positions</strong> – open position snapshot</li>
+                <li><strong>/pnl</strong> – today’s profit and loss</li>
+                <li><strong>/risk</strong> – current risk posture</li>
+                <li><strong>/brain</strong> – analysis and regime status</li>
+                <li><strong>/health</strong> – system health and errors</li>
+                <li><strong>/lasttrades</strong> – recent trade history</li>
+            </ul>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    enabled = telegram_is_configured()
+    if enabled:
+        st.success("Telegram is configured.")
+        if st.button("Send Telegram Test Message", use_container_width=True):
+            success = send_telegram("Ultimate DCA Bot dashboard test ping.")
+            if success:
+                st.success("Telegram test message sent.")
+            else:
+                st.error("Telegram test failed. Check auth settings.")
+    else:
+        st.warning("Telegram is not configured. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env.")
+
+
+def render_live_market_trade_card(snapshot: PositionSnapshot) -> None:
     st.subheader("📊 Live Market + Trade Card")
-    # Placeholder for BTC & ETH data
-    st.metric("BTC Price", "$30,000", "+2.5%")
-    st.metric("ETH Price", "$2,000", "+1.8%")
-    st.text("Trend: Bullish")
-    st.text("Active Trade: None")
-    st.text("Scanning market...")
+
+    open_positions = snapshot.open_positions if snapshot and snapshot.positions else {}
+    if open_positions:
+        st.write("**Open Positions**")
+        for symbol, pos in open_positions.items():
+            pnl = getattr(pos, 'unrealized_pnl_usdt', 0.0)
+            pnl_color = "🟢" if pnl >= 0 else "🔴"
+            st.metric(
+                f"{symbol}",
+                f"${getattr(pos, 'current_price', 0.0):,.2f}",
+                f"{pnl_color} {pnl:+.2f} USDT",
+            )
+        total_open = len(open_positions)
+        st.caption(f"{total_open} open position{'s' if total_open != 1 else ''} present")
+    else:
+        # attempt to show live BTC/ETH from Binance public feed, fall back to placeholders
+        try:
+            btc_price = market_data.get_price("BTC/USDT")
+            btc_pct = market_data.fetch_24h_change("BTC/USDT")
+        except Exception:
+            btc_price = None
+            btc_pct = None
+
+        try:
+            eth_price = market_data.get_price("ETH/USDT")
+            eth_pct = market_data.fetch_24h_change("ETH/USDT")
+        except Exception:
+            eth_price = None
+            eth_pct = None
+
+        if btc_price is not None:
+            st.metric("BTC Price", f"${btc_price:,.2f}", f"{btc_pct:+.2f}%" if btc_pct is not None else "")
+        else:
+            st.metric("BTC Price", "$30,000", "+2.5%")
+
+        if eth_price is not None:
+            st.metric("ETH Price", f"${eth_price:,.2f}", f"{eth_pct:+.2f}%" if eth_pct is not None else "")
+        else:
+            st.metric("ETH Price", "$2,000", "+1.8%")
+
+        st.text("Trend: Live" if btc_price or eth_price else "Trend: Bullish")
+        st.text("Active Trade: None")
+        st.text("Scanning market...")
+
+
+def render_live_charts(symbol: str = "BTC/USDT", timeframe: str = "1m", limit: int = 200) -> None:
+    st.markdown("**Live Price Chart**")
+    try:
+        ohlcv = market_data.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
+        if not ohlcv:
+            st.info("Live chart unavailable: no OHLCV data")
+            return
+
+        df = pd.DataFrame(ohlcv, columns=["ts", "open", "high", "low", "close", "volume"])
+        df["datetime"] = pd.to_datetime(df["ts"], unit="ms")
+        fig = go.Figure()
+        fig.add_trace(
+            go.Candlestick(
+                x=df["datetime"],
+                open=df["open"],
+                high=df["high"],
+                low=df["low"],
+                close=df["close"],
+                name=symbol,
+            )
+        )
+        fig.update_layout(margin=dict(l=0, r=0, t=20, b=0), height=300, template="plotly_dark")
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as exc:
+        st.info(f"Chart error: {exc}")
 
 
 def render_portfolio_panel(snapshot, performance, paper_report) -> None:
@@ -431,15 +567,23 @@ def render_portfolio_panel(snapshot, performance, paper_report) -> None:
         open_count = len(snapshot.positions) if snapshot and snapshot.positions else 0
         st.text(f"Open Positions: {open_count}")
         
-        if st.button("🛑 STOP BOT NOW", use_container_width=True):
-            disable_bot()
-            st.rerun()
+        # Add a prominent start button alongside the stop button so operators can
+        # easily find and start the bot from the portfolio panel.
+        start_now_col, stop_now_col = st.columns([1, 1])
+        with start_now_col:
+            if st.button("▶️ START BOT NOW", use_container_width=True):
+                enable_bot()
+                st.rerun()
+        with stop_now_col:
+            if st.button("🛑 STOP BOT NOW", use_container_width=True):
+                disable_bot()
+                st.rerun()
     except Exception as e:
         st.error(f"Portfolio panel error: {str(e)}")
 
 
 def render_trade_story_timeline(trade_history_mgr) -> None:
-    st.subheader("📜 Trade Story Timeline")
+    st.markdown("**Recent Trade Story**")
     try:
         trades = trade_history_mgr.load_filtered(time_filter="today")
         if not trades:
@@ -451,17 +595,28 @@ def render_trade_story_timeline(trade_history_mgr) -> None:
             exit_price = getattr(trade, 'exit_price', 'N/A')
             pnl = getattr(trade, 'pnl_usdt', 0.0)
             pnl_color = "🟢" if pnl >= 0 else "🔴"
-            st.text(f"{pnl_color} Entry: {entry_price} | Reason: {reason} | Exit: {exit_price} | P&L: {pnl:+.2f}")
+            st.markdown(f"- {pnl_color} Entry: {entry_price} | Reason: {reason} | Exit: {exit_price} | P&L: {pnl:+.2f}")
     except Exception as e:
         st.info(f"Trade history: {str(e) if str(e) else 'No trades recorded yet'}")
 
 
 def render_intelligence_panel(health, control) -> None:
-    st.subheader("⚠️ Intelligence Panel")
-    st.text("Why no trade: Cooldown active")
-    st.text("Current blockers: High volatility")
-    st.text("Risk warnings: Elevated")
-    st.text("Cooldown timer: 5 minutes")
+    st.markdown("**Operational Intelligence**")
+    st.write("- Current health: **%s**" % health_status_label(health))
+    st.write("- Reconnect events: %s" % health.get("reconnect_count", 0))
+    st.write("- Error count: %s" % health.get("error_count", 0))
+    st.write("- Latest connection event: %s" % health.get("last_connection_event", "none"))
+    st.write("- Control mode: **%s**" % str(control.get("mode", "paper")).upper())
+    st.write("- Enabled: **%s**" % ("Yes" if control.get("enabled", False) else "No"))
+
+
+def render_trade_and_intelligence_section(trade_history_mgr, health, control) -> None:
+    st.subheader("📜 Trade Story & Intelligence")
+    left_col, right_col = st.columns([1, 1])
+    with left_col:
+        render_trade_story_timeline(trade_history_mgr)
+    with right_col:
+        render_intelligence_panel(health, control)
 
 
 def build_health_state(journal_entries) -> dict:
